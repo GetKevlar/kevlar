@@ -1,0 +1,10 @@
+%% Mermaid diagram describing the Kevlar architecture
+
+graph TD
+    A[CISA/MITRE Feeds] --> B[Ingest & Enrich]\n(parse KEVs)
+    B --> C[BigQuery KEV Table]
+    C --> D[Correlation Engine]\n(join with Jamf/Intune)
+    D --> E[Jira & Slack Alerts]
+    D --> F[Looker Dashboard]
+    E --> G[Security Team]
+    F --> G
