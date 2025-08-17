@@ -43,7 +43,61 @@ logger = logging.getLogger("kevlar")
 # function's service account credentials.
 bq_client = bigquery.Client()
 
-# Environment configuration
+from .ingest.loader import load_to_bigquery
+from .utils.utils import create_session
+
+#
+
+def ingest_and_load(session):
+    """
+    Ingest the CISA KEV feed, enrich with MITRE details,
+    and load processed entries into BigQuery. Returns the list of processed records.
+    """
+    cisa_entries = fetch_cisa_kev(session)
+    processed = []
+    for entry in cisa_entries:
+        try:
+            enriched = fetch_mitre_details(session, entry["cve_id"])
+            processed.append(enriched)
+        except Exception as err:
+            logger.error(f"Failed to enrich {entry['cve_id']}: {err}")
+    if processed:
+        load_to_bigquery(processed)
+        wait_time = int(os.environ.get("BQ_WAIT_TIME", "10"))
+        time.sleep(wait_time)
+    return processed
+
+
+def correlate_inventory():
+    """
+    Run correlation across KEVs and inventory. Returns a DataFrame of matches.
+    """
+    return correlate_key_inventory()
+
+
+def notify_matches(matches):
+    """
+    Create a Jira ticket for each match and return the total number created.
+    """
+    tickets = 0
+    if matches is not None and not matches.empty:
+        for _, row in matches.iterrows():
+            if create_jira_ticket(row):
+                tickets += 1
+    return tickets
+
+
+def run_health_mode():
+    """
+    Run correlation and create a single weekly health ticket.
+    Returns (issue_key, match_count).
+    """
+    df = correlate_key_inventory()
+    issue_key = create_health_ticket(df)
+    match_count = 0 if df is None else len(df)
+    return issue_key, match_count
+
+ Environment configuration
 PROJECT_ID = os.environ.get("PROJECT_ID")
 DATASET_ID = os.environ.get("DATASET_ID")
 TABLE_ID = os.environ.get("TABLE_ID")
@@ -51,22 +105,57 @@ TABLE_ID = os.environ.get("TABLE_ID")
 @functions_framework.http
 def kev_pipeline(request):
     """HTTP Cloud Function entry point for the Kevlar pipeline."""
-    try:
-        args = request.args if request and hasattr(request, "args") else {}
+        try:
+        # Determine health mode
+                # NEW modular pipeline
+        request_args = request.args if request and hasattr(request, "args") else {}
+        health_mode_env_mod = os.environ.get("HEALTH_MODE", "false").lower() == "true"
+        health_mode_arg_mod = str(request_args.get("health", "false")).lower() == "true"
+        health_mode_mod = health_mode_env_mod or health_mode_arg_mod
+
+        if health_mode_mod:
+            logger.info("Running Kevlar in health mode")
+            issue_key, count = run_health_mode()
+            return (
+                f"Health run complete. Ticket: {issue_key if issue_key else 'FAILED'}; matches={count}",
+                200 if issue_key else 500,
+            )
+
+        logger.info("Running Kevlar in normal mode")
+        session = create_session()
+        valid_records = ingest_and_load(session)
+        matches = correlate_inventory()
+        tickets = notify_matches(matches)
+        return (
+            f"Run complete. Ingested={len(valid_records)}; match_tickets={tickets}",
+            200,
+        )
+        # END modular pipeline
+args = request.args if request and hasattr(request, "args") else {}
         health_mode_env = os.environ.get("HEALTH_MODE", "false").lower() == "true"
         health_mode_arg = str(args.get("health", "false")).lower() == "true"
         health_mode = health_mode_env or health_mode_arg
 
         if health_mode:
             logger.info("Running Kevlar in health mode")
-            df = correlate_kev_inventory()
-            issue_key = create_health_ticket(df)
-            count = 0 if df is None else len(df)
-            message = (
-                f"Health run complete. Ticket: {issue_key if issue_key else 'FAILED'}; "
-                f"matches={count}"
+            issue_key, count = run_health_mode()
+            return (
+                f"Health run complete. Ticket: {issue_key if issue_key else 'FAILED'}; matches={count}",
+                200 if issue_key else 500,
             )
-            return message, 200 if issue_key else 500
+
+        logger.info("Running Kevlar in normal mode")
+        session = create_session()
+        valid_records = ingest_and_load(session)
+        matches = correlate_inventory()
+        tickets = notify_matches(matches)
+        return (
+            f"Run complete. Ingested={len(valid_records)}; match_tickets={tickets}",
+            200,
+        )
+    except Exception as exc:
+        logger.error(f"Kevlar pipeline failed: {exc}\n{traceback.format_exc()}")
+        return f"Kevlar pipeline failed: {exc}", 500f issue_key else 500
 
         logger.info("Running Kevlar in normal mode")
         # Ingest CISA feed and enrich with MITRE details
