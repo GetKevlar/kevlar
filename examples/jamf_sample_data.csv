@@ -1,0 +1,4 @@
+Computer_Name,Application_Title,_Application_Version,cve_id,kev_description,patched_version,cvss_score,affected_version
+Laptop-001,Google Chrome,81.0,CVE-2020-6418,"Type Confusion in V8",85.0,8.8,81.0
+MacBookPro-15,Zoom,5.0.0,CVE-2020-11443,"Path traversal vulnerability in Zoom client",5.1.0,7.5,5.0.0
+Desktop-007,Slack,4.2.0,CVE-2019-15691,"Memory corruption in Electron",4.3.3,7.8,4.2.0
