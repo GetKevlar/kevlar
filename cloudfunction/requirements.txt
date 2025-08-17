@@ -1,0 +1,7 @@
+functions-framework
+google-cloud-bigquery
+pandas
+jira
+requests
+python-dotenv
+packaging
