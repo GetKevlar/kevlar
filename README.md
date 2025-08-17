@@ -1,66 +1,106 @@
 # Kevlar
 
-Kevlar is a vulnerability intelligence engine that ingests Known Exploited Vulnerabilities (KEVs),
-correlates them against endpoint inventory data (for example Jamf‑managed Macs or Intune‑managed
-devices), and surfaces actionable alerts via Jira or Slack.  This repository contains the
-open‑source core of Kevlar.  The goal of the project is to give organizations a lightweight way
-to answer a critical question:
+Kevlar is a vulnerability intelligence engine that ingests Known Exploited Vulnerabilities (KEVs), normalizes version data, correlates it against endpoint inventory (for example, Jamf‑managed Macs or Intune‑managed devices), and surfaces actionable results via Jira or Slack.
 
-> **Which of the vulnerabilities on the CISA Known Exploited Vulnerability list affect my
-> endpoints right now?**
+The objective is to answer:
 
-By leveraging BigQuery and modular connectors, Kevlar can ingest the public CISA and MITRE
-feeds, normalize their output, and cross‑reference the results against your device inventory.
+**Which KEV‑listed vulnerabilities affect my endpoints right now—down to the exact version running?**
+
+Unlike many scanners and EDR reports that flag CVEs generically, Kevlar focuses on version‑aware normalization and correlation so you see only confirmed, endpoint‑specific risk.
+
+## Why Kevlar
+
+- **Version‑aware correlation**: Kevlar normalizes version strings from KEV data and from your inventory, enabling exact version‑to‑endpoint matches (not just "potentially affected").
+- **Low overhead**: Deployed as a lightweight Cloud Function with modular connectors; no full scanner or agent required.
+- **Actionable outputs**: Opens targeted Jira tickets and Slack summaries; optional weekly health status.
+- **Extensible**: Connector pattern makes it straightforward to add other inventory sources.
 
 ## Features
 
-* **CISA/MITRE ingestion** – fetches CVE data from the public feeds and loads it into BigQuery.
-* **Modular inventory connectors** – includes reference connectors for Jamf and Intune; you can
-  implement additional collectors by following the patterns in `cloudfunction/correlate`.
-* **Correlation engine** – joins KEV entries with your endpoint data to determine which devices
-  are running vulnerable versions of software.
-* **Alerting integrations** – integrates with Jira and Slack to create per‑match tickets or
-  weekly health reports.
-* **Health mode** – runs a weekly summary without ingesting new KEVs and creates a single
-  status ticket.
+- **Normalization engine**: Aligns and cleans version data across feeds and endpoint inventories.
+- **CISA and MITRE ingestion**: Fetches KEV/CVE data and loads it into BigQuery.
+- **Correlation engine**: Joins KEV entries with endpoint data to identify devices running vulnerable versions.
+- **Alerting**: Jira ticket creation (per match) and Slack notifications; a weekly health report mode.
+- **Modular connectors**: Reference connectors for Jamf and Intune; additional collectors can follow the pattern in `cloudfunction/correlate`.
 
 ## Getting Started
 
-1. **Clone the repository**.  Clone this repo into your own GitHub organization or fork it to
-   begin development.
-2. **Configure the environment**.  Copy `.env.sample` to `.env` and set your Google Cloud
-   project ID, BigQuery dataset, Jira credentials, and other settings as needed.
-3. **Deploy the Cloud Function**.  Use the provided `setup.sh` script (or write your own
-   Terraform) to create the BigQuery dataset and deploy the Cloud Function.  The function
-   entry point is `kev_pipeline` in `cloudfunction/main.py`.
-4. **Set up scheduled runs**.  Use Cloud Scheduler or your preferred scheduler to invoke the
-   function regularly.  You can enable health mode via an environment variable or URL
-   parameter.
+### Clone
+```bash
+git clone https://github.com/GetKevlar/kevlar.git
+cd kevlar
+```
 
-See the `dashboard/` directory for a Looker Studio dashboard template and the `examples/`
-directory for sample inventory data.
+### Configure environment
+Copy and edit:
+```bash
+cp .env.sample .env
+```
+Required values:
+- `PROJECT_ID` – Google Cloud project ID
+- `DATASET_ID` – BigQuery dataset (for KEVs and inventory)
+- `TABLE_ID` – BigQuery table for KEVs
+- `JIRA_URL`, `JIRA_USER`, `JIRA_TOKEN` – for Jira integration
+- Optional: `SLACK_WEBHOOK_URL`
+- Optional: `BQ_WAIT_TIME` (seconds to wait for BQ consistency before correlation)
 
-An architecture diagram is provided in `diagrams/kevlar_architecture.mmd` and
-`diagrams/kevlar_architecture.png`.  The Mermaid source can be rendered using the
-Mermaid CLI (`mmdc`), and the PNG file is a conceptual flow chart generated
-for quick reference.
+## Secure Deployment (GCP)
+
+Deploy authenticated‑only (recommended). Gen2 shown:
+
+```bash
+gcloud functions deploy kev_pipeline \
+  --gen2 --runtime=python310 \
+  --trigger-http \
+  --no-allow-unauthenticated \
+  --ingress-settings=internal-and-gclb
+```
+
+Grant a scheduler service account permission to invoke the function:
+
+```bash
+gcloud functions add-iam-policy-binding kev_pipeline \
+  --member=serviceAccount:kevlar-scheduler@PROJECT_ID.iam.gserviceaccount.com \
+  --role=roles/run.invoker
+```
+
+Schedule a weekly health run with Cloud Scheduler (OIDC):
+
+```bash
+gcloud scheduler jobs create http kevlar-health \
+  --schedule="0 8 * * MON" \
+  --http-method=GET \
+  --uri="https://REGION-PROJECT.cloudfunctions.net/kev_pipeline?health=true" \
+  --oidc-service-account-email=kevlar-scheduler@PROJECT_ID.iam.gserviceaccount.com \
+  --oidc-token-audience="https://REGION-PROJECT.cloudfunctions.net/kev_pipeline"
+```
+
+> Note: Store secrets in Secret Manager and map them to environment variables at deploy time. Do not enable unauthenticated access.
+
+## Dashboards and Examples
+
+- Looker Studio template: `dashboard/`
+- Example inventory data: `examples/`
+
+## Architecture
+
+The architecture diagram is in `diagrams/kevlar_architecture.png`.  
+Mermaid source (`diagrams/kevlar_architecture.mmd`) can be rendered with Mermaid CLI:
+```bash
+mmdc -i diagrams/kevlar_architecture.mmd -o diagrams/kevlar_architecture.png
+```
 
 ## Roadmap
 
-This is a work in progress.  Planned enhancements include:
-
-* Deduplication of per‑match alerts via a sent‑alert hash table.
-* Additional inventory connectors (e.g. SentinelOne, CrowdStrike, Tanium).
-* A simple Slackbot for natural‑language queries about KEVs.
-* Integration with ExploitIQ (our LLM‑powered summarization engine).
+- Deduplication of per‑match alerts (sent‑alert hash).
+- Additional connectors (SentinelOne, CrowdStrike, Tanium).
+- Slack bot for natural‑language KEV queries.
+- Integration with ExploitIQ for executive summarization.
 
 ## ExploitIQ
 
-ExploitIQ is a proprietary add‑on for Kevlar that brings natural‑language AI
-into your vulnerability workflow.  As our tagline says, it's so easy even
-your CISO can use it.  See `exploit-iq/README.md` for more details.
+ExploitIQ is a proprietary add‑on for Kevlar providing natural‑language summaries and executive reporting from correlation results. See `exploit-iq/README.md` for details.
 
 ## License
 
-Kevlar is source‑available under the Business Source License v1.1.  See the `LICENSE` file for
-details.
+Kevlar is source‑available under the Business Source License v1.1. See `LICENSE`.
