@@ -1,0 +1,21 @@
+{
+  "description": "Sample Looker Studio dashboard template for Kevlar",
+  "notes": "This file serves as a starting point for visualizing Kevlar data in Looker Studio.\n\nIt defines a few example charts you can import into Looker Studio and bind to your BigQuery dataset. To use it, replace the dataset placeholders with your own project, dataset and table names.\n\nFor more information on creating reports, see: https://support.google.com/looker-studio/answer/9053465",
+  "charts": [
+    {
+      "type": "bar",
+      "title": "KEV Matches by Application",
+      "sql": "SELECT Application_Title, COUNT(*) AS match_count FROM `PROJECT_ID.DATASET.app_matches` GROUP BY Application_Title ORDER BY match_count DESC LIMIT 10"
+    },
+    {
+      "type": "line",
+      "title": "Endpoint Counts Over Time",
+      "sql": "SELECT DATE(_processed_at) AS date, COUNT(DISTINCT Computer_Name) AS endpoints FROM `PROJECT_ID.DATASET.app_matches` GROUP BY date ORDER BY date"
+    },
+    {
+      "type": "table",
+      "title": "Recent KEV Matches",
+      "sql": "SELECT Computer_Name, Application_Title, _Application_Version, cve_id, patched_version FROM `PROJECT_ID.DATASET.app_matches` ORDER BY _processed_at DESC LIMIT 25"
+    }
+  ]
+}
